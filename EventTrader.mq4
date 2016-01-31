@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Yuan"
 #property link      "b98705002@gmail.com"
-#property version   "1.123"
+#property version   "1.131"
 #property strict
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -26,7 +26,7 @@ extern double prestage_risk = 0.02;
 extern double announce_stage_stp_perceent = 0.4;
 
 //auto compute
-double lots_size; 
+double lots_size;
 
 int magicnum;
 //  for cmd file input
@@ -70,7 +70,7 @@ double start_value;
 //  for stoploss and reverse event
 double stoploss_value;
 bool reverse_event;
-//  bool InPreStage;
+bool InPreStage;
 int stage_reverse_allow_fallback;
 int stage_reverse_event_sec;
 bool profitcheck;
@@ -82,13 +82,14 @@ const int pre_stage = 1;
 const int announce_stage = 2;
 const int reverse_stage = 3;
 const int one_hour = 3600;
+const int one_min = 3600;
 
 
 int OnInit()
 {
 //---
 	lots_size = Lotsize();
-	codeversion = "20160123:refatoring of threshold and code readibility, check threshold compute rate";
+	codeversion = "20160131: modify for stop loss and risk_stp";
 	stage_reverse_allow_fallback = 0.5 * one_hour;
 	stage_reverse_event_sec = 4 * one_hour;
 	last_rate = 1;
@@ -108,7 +109,7 @@ int OnInit()
 	announce_thres_mul = 1.5;
 	total_close_rate = 1;
 	reverse_event = false;
-	//InPreStage=false;
+	InPreStage = false;
 	profitcheck = false;
 	allowfallbackClose = false; //only stage 3 can profit-fallback close
 	Print("filepath" + filename);
@@ -135,10 +136,10 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick() {
 	magicnum = Month() * 100 + Day();
-	if ((!offquote_error) && close_fail == 0) { 
-  //if no Order error, else repeat order action (open or close)
+	if ((!offquote_error) && close_fail == 0) {
+		//if no Order error, else repeat order action (open or close)
 		if (reverse_event) {
-      // reverse event
+			// reverse event
 			if (SymOrderTotal() > 0) {
 				checkorderfallbackProfit();
 				checkordertime();
@@ -155,7 +156,7 @@ void OnTick() {
 				}
 			}
 		} else {
-      // normal tick run, check stoploss and allowfallback
+			// normal tick run, check stoploss and allowfallback
 			if (SymOrderTotal() > 0) {
 				checkstoploss();
 				checkorderfallbackProfit();
@@ -193,7 +194,7 @@ void OnTick() {
 					}
 				}
 			}
-      // end file IO
+			// end file IO
 
 			if (stage_code == 1) { //pre stage
 				allowfallbackClose = false;
@@ -204,16 +205,16 @@ void OnTick() {
 					string comment = codeversion + stage_code + strategy;
 					stageone_status = 1;
 					Sell(sym, lots_size, comment, magicnum, small_slip, pre_stage);
-					//   InPreStage=true;
+					InPreStage = true;
 				} else if (StringCompare(strategy, "worse") == 0) { //usd forecast<previous USD weak, Buy EURUSD and set fallback threshold
 					string comment = codeversion + stage_code + strategy;
 					stageone_status = 2;
 					Buy(sym, lots_size, comment, magicnum, small_slip, pre_stage);
-					//   InPreStage=true;
+					InPreStage = true;
 				}
 				stage_code = 0;
 			} else if (stage_code == 2) { //announce stage
-				//   InPreStage=false;
+				InPreStage = false;
 				profitcheck = false;
 				if (StringCompare(strategy, "better") == 0) {
 					if (stageone_status == 1) { // better and better  , add!  new 25% fallback baseline
@@ -257,16 +258,16 @@ void OnTick() {
 				CloseAllOrder(small_slip, total_close_rate);
 			}
 		}
-	} 
-  else if (close_fail > 0) { 
-  // repeat close, close first
+	}
+	else if (close_fail > 0) {
+		// repeat close, close first
 		printf("close fail");
 		CloseAllOrder(last_slip, last_rate);
 	}
-	else if (offquote_error) { 
-  //off quote error  , repeat open last trade
-		if (trade_code == 0) { 
-    //repeat buy
+	else if (offquote_error) {
+		//off quote error  , repeat open last trade
+		if (trade_code == 0) {
+			//repeat buy
 			offquote_error = false;
 			Buy(last_sym, last_lots, last_comment, magicnum, last_slip, last_stage);
 		} else {
@@ -334,28 +335,37 @@ void checkProfit() {
 //+------------------------------------------------------------------+
 void checkstoploss() {
 	int total = OrdersTotal();
+	double currenttime = TimeCurrent();
 	for (int i = 0; i < total; i++) {
 		bool select = OrderSelect(i, SELECT_BY_POS , MODE_TRADES);
 		if (select) {
 			string sym_close = OrderSymbol();
-			if (sym_close == sym) {
+			if (sym_close == sym && currenttime > OrderOpenTime() + 5 * one_min) {
 				if (OrderType() == OP_BUY && Bid < stoploss_value) {
 					CloseAllOrder(big_slip, total_close_rate);
-					reverse_event = true;
-					Sell(sym, lots_size, "reverse Sell", magicnum, big_slip, reverse_stage);
-					printf("close by stoploss, big slip;");
-					// InPreStage=false;
+					// do reverse trade
+					if (!InPreStage) {
+						reverse_event = true;
+						Sell(sym, lots_size, "reverse Sell", magicnum, big_slip, reverse_stage);
+						printf("close by stoploss, big slip");
+					} else {
+						InPreStage = false;
+					}
 				} else if (OrderType() == OP_SELL && Ask > stoploss_value) {
 					CloseAllOrder(big_slip, total_close_rate);
-					reverse_event = true;
-					Buy(sym, lots_size, "reverse Buy", magicnum, big_slip, reverse_stage);
-					printf("close by stoploss, big slip;");
-					//  InPreStage=false;
+					// do reverse trade
+					if (!InPreStage) {
+						reverse_event = true;
+						Buy(sym, lots_size, "reverse Buy", magicnum, big_slip, reverse_stage);
+						printf("close by stoploss, big slip");
+					} else {
+						InPreStage = false;
+					}
 				}
-
 			}
-		}//end select
-	}//end for
+		}
+	}//end select
+//end for
 }
 //+------------------------------------------------------------------+
 int SymOrderTotal() {
