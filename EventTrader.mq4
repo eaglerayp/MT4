@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Yuan"
 #property link      "b98705002@gmail.com"
-#property version   "1.203"
+#property version   "1.204"
 #property strict
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -505,18 +505,18 @@ void Buy(string sym_buy, double lots, string comment, int magic, int slip, int s
 	double point = MarketInfo(sym_buy, MODE_POINT);
 	double threshold_multiplier;
 	if (stoploss_stage == pre_stage) { // pre stage
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = bid - point * risk_stp; // use bid prevent spread
 		threshold_multiplier = 1;
 	} else if (stoploss_stage == announce_stage) { // announce stage
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = bid - point * risk_stp; // use bid prevent spread
 		threshold_multiplier = (SymOrderTotal() > 0) ? 1 : announce_thres_mul;
 		InPostStage = true;
 	} else if (stoploss_stage == reverse_stage) {  //reverse trade
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = bid - point * risk_stp; // use bid prevent spread
 		threshold_multiplier = 2;
@@ -555,21 +555,21 @@ void Sell(string sym_sell, double lots, string comment, int magic, int slip, int
 	// settings of parameters depends on stage
 	if (stoploss_stage == pre_stage) {
 		//loss = size *stp
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = ask + point * risk_stp;
 		// use ask prevent spread
 		threshold_multiplier = 1;
 	} else if (stoploss_stage == announce_stage) {
 		// announce stage
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = ask + point * risk_stp;
 		threshold_multiplier = (SymOrderTotal() > 0) ? 1 : announce_thres_mul;
 		InPostStage = true;
 	} else if (stoploss_stage == reverse_stage) {
 		// reverse trade
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = ask + point * risk_stp;
 		threshold_multiplier = 2;
