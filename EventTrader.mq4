@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Yuan"
 #property link      "b98705002@gmail.com"
-#property version   "1.131"
+#property version   "1.203"
 #property strict
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -20,10 +20,11 @@ extern double partial_closerate = 0.25;
 extern double half_closerate = 0.5;
 extern int simultaneous_symbol = 2;
 extern int stp = 800;
-extern double risk = 0.1;
 extern double prestage_stp = 200;
 extern double prestage_risk = 0.02;
 extern double announce_stage_stp_perceent = 0.4;
+extern double riskPoints_EURUSD = 8670;
+extern double riskPoints_AUDUSD = 10400;
 
 //auto compute
 double lots_size;
@@ -70,7 +71,8 @@ double start_value;
 //  for stoploss and reverse event
 double stoploss_value;
 bool reverse_event;
-bool InPreStage;
+// bool InPreStage;
+bool InPostStage;
 int stage_reverse_allow_fallback;
 int stage_reverse_event_sec;
 bool profitcheck;
@@ -84,6 +86,8 @@ const int reverse_stage = 3;
 const int one_hour = 3600;
 const int one_min = 3600;
 
+// for lot size
+double riskPoints;
 
 int OnInit()
 {
@@ -97,6 +101,14 @@ int OnInit()
 	//change_SL=0;
 	filter = "*.txt";
 	sym = Symbol();
+	riskPoints = 10000; // default if unexpect product
+	if (Symbol()=="EURUSD"){
+		riskPoints = riskPoints_EURUSD;
+	}
+	if (Symbol()=="AUDUSD"){
+		riskPoints = riskPoints_AUDUSD;
+	}
+
 	filename = sym + ".txt";
 	stage_code = 0;
 	close_fail = 0;
@@ -109,7 +121,8 @@ int OnInit()
 	announce_thres_mul = 1.5;
 	total_close_rate = 1;
 	reverse_event = false;
-	InPreStage = false;
+	// InPreStage = false;
+	InPostStage = false;
 	profitcheck = false;
 	allowfallbackClose = false; //only stage 3 can profit-fallback close
 	Print("filepath" + filename);
@@ -205,16 +218,16 @@ void OnTick() {
 					string comment = codeversion + stage_code + strategy;
 					stageone_status = 1;
 					Sell(sym, lots_size, comment, magicnum, small_slip, pre_stage);
-					InPreStage = true;
+					// InPreStage = true;
 				} else if (StringCompare(strategy, "worse") == 0) { //usd forecast<previous USD weak, Buy EURUSD and set fallback threshold
 					string comment = codeversion + stage_code + strategy;
 					stageone_status = 2;
 					Buy(sym, lots_size, comment, magicnum, small_slip, pre_stage);
-					InPreStage = true;
+					// InPreStage = true;
 				}
 				stage_code = 0;
 			} else if (stage_code == 2) { //announce stage
-				InPreStage = false;
+				// InPreStage = false;
 				profitcheck = false;
 				if (StringCompare(strategy, "better") == 0) {
 					if (stageone_status == 1) { // better and better  , add!  new 25% fallback baseline
@@ -278,12 +291,10 @@ void OnTick() {
 }
 //+------------------------------------------------------------------+
 double Lotsize() {
-	double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-	/*double cost=MarketInfo(Symbol(),MODE_MARGINREQUIRED)/100;
-	double risk_limit=cost+stp*point_value;
-	double size=floor(freemargin/risk_limit)/100;*/
-	double freemargin = balance / simultaneous_symbol;
-	double size = Floorsize(freemargin * risk / (stp * point_value * 10)); //max loss (0.1*balance = stp* size)  point*10 because we use 0.00001 as unit
+	double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+	double cost=MarketInfo(Symbol(),MODE_MARGINREQUIRED);
+	double perEquity = equity / (simultaneous_symbol);
+	double size = Floorsize(perEquity/(cost+riskPoints)); //max loss (0.1*balance = stp* size)  point*10 because we use 0.00001 as unit
 	size = MathMin(size, MarketInfo(Symbol(), MODE_MAXLOT));
 	size = MathMax(size, MarketInfo(Symbol(), MODE_MINLOT));
 	return size;
@@ -343,24 +354,20 @@ void checkstoploss() {
 			if (sym_close == sym && currenttime > OrderOpenTime() + 5 * one_min) {
 				if (OrderType() == OP_BUY && Bid < stoploss_value) {
 					CloseAllOrder(big_slip, total_close_rate);
-					// do reverse trade
-					if (!InPreStage) {
+					// only in post stage do reverse trade
+					if (InPostStage) {
 						reverse_event = true;
 						Sell(sym, lots_size, "reverse Sell", magicnum, big_slip, reverse_stage);
 						printf("close by stoploss, big slip");
-					} else {
-						InPreStage = false;
-					}
+					} 
 				} else if (OrderType() == OP_SELL && Ask > stoploss_value) {
 					CloseAllOrder(big_slip, total_close_rate);
 					// do reverse trade
-					if (!InPreStage) {
+					if (InPostStage) {
 						reverse_event = true;
 						Buy(sym, lots_size, "reverse Buy", magicnum, big_slip, reverse_stage);
 						printf("close by stoploss, big slip");
-					} else {
-						InPreStage = false;
-					}
+					} 
 				}
 			}
 		}
@@ -425,6 +432,11 @@ void CloseAllOrder(int slip, double closerate) {
 					last_rate = closerate;
 					printf("close error ticket:" + OrderTicket() + "error:" + check);
 					if (check != ERR_NO_ERROR) printf("Close not sent. Error: " + ErrorDescription(check) + " Ask:" + Ask);
+				} else {
+					// close successfully
+					if (InPostStage) {
+						InPostStage = false;
+					}
 				}
 			}
 		}//end select
@@ -493,15 +505,20 @@ void Buy(string sym_buy, double lots, string comment, int magic, int slip, int s
 	double point = MarketInfo(sym_buy, MODE_POINT);
 	double threshold_multiplier;
 	if (stoploss_stage == pre_stage) { // pre stage
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = bid - point * risk_stp; // use bid prevent spread
 		threshold_multiplier = 1;
 	} else if (stoploss_stage == announce_stage) { // announce stage
-		stoploss_value = bid - point * stp * announce_stage_stp_perceent;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
+		stoploss_value = bid - point * risk_stp; // use bid prevent spread
 		threshold_multiplier = (SymOrderTotal() > 0) ? 1 : announce_thres_mul;
+		InPostStage = true;
 	} else if (stoploss_stage == reverse_stage) {  //reverse trade
-		stoploss_value = bid - point * stp * announce_stage_stp_perceent;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
+		stoploss_value = bid - point * risk_stp; // use bid prevent spread
 		threshold_multiplier = 2;
 	}
 	double sl = bid - stp * point;
@@ -538,18 +555,23 @@ void Sell(string sym_sell, double lots, string comment, int magic, int slip, int
 	// settings of parameters depends on stage
 	if (stoploss_stage == pre_stage) {
 		//loss = size *stp
-		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_BALANCE) / lots;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
 		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
 		stoploss_value = ask + point * risk_stp;
 		// use ask prevent spread
 		threshold_multiplier = 1;
 	} else if (stoploss_stage == announce_stage) {
 		// announce stage
-		stoploss_value = ask + point * stp * announce_stage_stp_perceent;
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
+		stoploss_value = ask + point * risk_stp;
 		threshold_multiplier = (SymOrderTotal() > 0) ? 1 : announce_thres_mul;
+		InPostStage = true;
 	} else if (stoploss_stage == reverse_stage) {
-		//reverse trade
-		stoploss_value = bid - point * stp * announce_stage_stp_perceent;
+		// reverse trade
+		double risk_stp = prestage_risk * AccountInfoDouble(ACCOUNT_FREEMARGIN) / lots;
+		risk_stp = (risk_stp > prestage_stp) ? prestage_stp : risk_stp;
+		stoploss_value = ask + point * risk_stp;
 		threshold_multiplier = 2;
 	}
 	double sl = ask + stp * point;
