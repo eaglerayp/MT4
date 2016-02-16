@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Yuan"
 #property link      "b98705002@gmail.com"
-#property version   "1.204"
+#property version   "1.209"
 #property strict
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -84,7 +84,7 @@ const int pre_stage = 1;
 const int announce_stage = 2;
 const int reverse_stage = 3;
 const int one_hour = 3600;
-const int one_min = 3600;
+const int one_min = 60; //sec
 
 // for lot size
 double riskPoints;
@@ -93,7 +93,7 @@ int OnInit()
 {
 //---
 	lots_size = Lotsize();
-	codeversion = "20160131: modify for stop loss and risk_stp";
+	codeversion = "20160209: test and fix stoploss";
 	stage_reverse_allow_fallback = 0.5 * one_hour;
 	stage_reverse_event_sec = 4 * one_hour;
 	last_rate = 1;
@@ -154,8 +154,8 @@ void OnTick() {
 		if (reverse_event) {
 			// reverse event
 			if (SymOrderTotal() > 0) {
-				checkorderfallbackProfit();
-				checkordertime();
+				checkOrderFallbackProfit();
+				checkOrderTime();
 			} else { //for reach tp case
 				reverse_event = false;
 				printf("reversed event end");
@@ -171,8 +171,8 @@ void OnTick() {
 		} else {
 			// normal tick run, check stoploss and allowfallback
 			if (SymOrderTotal() > 0) {
-				checkstoploss();
-				checkorderfallbackProfit();
+				checkStoploss();
+				checkOrderFallbackProfit();
 				if (profitcheck) {
 					checkProfit();
 				}
@@ -309,18 +309,20 @@ double Floorsize(double x) {
 	return size;
 }
 //+------------------------------------------------------------------+
-void checkordertime() {
-	double currenttime = TimeCurrent();
+void checkOrderTime() {
+	double currentTime = TimeCurrent();
 	int total = OrdersTotal();
 	for (int i = 0; i < total; i++) {
 		bool select = OrderSelect(i, SELECT_BY_POS , MODE_TRADES);
 		if (select) {
 			string sym_close = OrderSymbol();
-			if (sym_close == sym && OrderOpenTime() + stage_reverse_event_sec < currenttime) { //
+			double Orderopen = OrderOpenTime();
+			double leaveTime = Orderopen + stage_reverse_event_sec;
+			if (sym_close == sym && leaveTime < currentTime) { //
 				//time up CloseAllOrder
-				printf("close by time; now only stoploss");
+				printf("close by time; now only stoploss order will do this");
 				CloseAllOrder(small_slip, total_close_rate);
-			} else if (sym_close == sym && OrderOpenTime() + stage_reverse_allow_fallback < currenttime) {
+			} else if (sym_close == sym && OrderOpenTime() + stage_reverse_allow_fallback < currentTime) {
 				allowfallbackClose = true;
 			}
 		}//end select
@@ -344,14 +346,16 @@ void checkProfit() {
 	}//end for
 }
 //+------------------------------------------------------------------+
-void checkstoploss() {
+void checkStoploss() {
 	int total = OrdersTotal();
-	double currenttime = TimeCurrent();
+	double currentTime = TimeCurrent();
+   double five_mins= 5* one_min;
 	for (int i = 0; i < total; i++) {
 		bool select = OrderSelect(i, SELECT_BY_POS , MODE_TRADES);
 		if (select) {
 			string sym_close = OrderSymbol();
-			if (sym_close == sym && currenttime > OrderOpenTime() + 5 * one_min) {
+			double Orderopen = OrderOpenTime();
+			if (sym_close == sym && currentTime > Orderopen + five_mins) {
 				if (OrderType() == OP_BUY && Bid < stoploss_value) {
 					CloseAllOrder(big_slip, total_close_rate);
 					// only in post stage do reverse trade
@@ -445,7 +449,7 @@ void CloseAllOrder(int slip, double closerate) {
 	printf("close end, before close orders:" + sym_orders + " after close:" + SymOrderTotal() + " left, close_fail:" + close_fail);
 }
 //+------------------------------------------------------------------+
-void checkorderfallbackProfit() {
+void checkOrderFallbackProfit() {
 	if (ordertype > 0) {
 		if (ordertype == 1) { //buy
 			// set max
