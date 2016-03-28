@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Yuan"
 #property link      "b98705002@gmail.com"
-#property version   "1.209"
+#property version   "1.327"
 #property strict
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -38,7 +38,7 @@ string sym;
 string event;
 string stage;
 string strategy;
-string winrate_class;
+string parameters;
 int stage_code;
 int stageone_status;
 
@@ -93,7 +93,7 @@ int OnInit()
 {
 //---
 	lots_size = Lotsize();
-	codeversion = "20160209: test and fix stoploss";
+	codeversion = "20160327:test fallback & add surprise";
 	stage_reverse_allow_fallback = 0.5 * one_hour;
 	stage_reverse_event_sec = 4 * one_hour;
 	last_rate = 1;
@@ -102,10 +102,10 @@ int OnInit()
 	filter = "*.txt";
 	sym = Symbol();
 	riskPoints = 10000; // default if unexpect product
-	if (Symbol()=="EURUSD"){
+	if (Symbol() == "EURUSD") {
 		riskPoints = riskPoints_EURUSD;
 	}
-	if (Symbol()=="AUDUSD"){
+	if (Symbol() == "AUDUSD") {
 		riskPoints = riskPoints_AUDUSD;
 	}
 
@@ -173,6 +173,7 @@ void OnTick() {
 			if (SymOrderTotal() > 0) {
 				checkStoploss();
 				checkOrderFallbackProfit();
+				// only when stage 3 allow fallback profit, check if profit<0 => close
 				if (profitcheck) {
 					checkProfit();
 				}
@@ -187,7 +188,7 @@ void OnTick() {
 					event = FileReadString(file_handle);
 					stage = FileReadString(file_handle);
 					strategy = FileReadString(file_handle);
-					winrate_class = FileReadString(file_handle);
+					parameters = FileReadString(file_handle);
 					if (StringCompare(stage, "pre") == 0) {
 						stage_code = 1;
 					} else if (StringCompare(stage, "Act") == 0) {
@@ -199,7 +200,7 @@ void OnTick() {
 					} else if (StringCompare(stage, "Stage2 close") == 0) { // now using JAVA control close time because we open order at two time, hardly control without timer
 						stage_code = 5;
 					}
-					printf("CMD:" + event + ";" + stage + ";" + strategy + ";" + winrate_class);
+					printf("CMD:" + event + ";" + stage + ";" + strategy + ";" + parameters);
 					FileClose(file_handle);
 					bool del = FileDelete(filename);
 					if (!del) {
@@ -229,6 +230,9 @@ void OnTick() {
 			} else if (stage_code == 2) { //announce stage
 				// InPreStage = false;
 				profitcheck = false;
+				if (StringCompare(parameters, "1") == 0) { // surprise
+					lots_size *= 2;
+				}
 				if (StringCompare(strategy, "better") == 0) {
 					if (stageone_status == 1) { // better and better  , add!  new 25% fallback baseline
 						string comment = "big better";
@@ -292,9 +296,9 @@ void OnTick() {
 //+------------------------------------------------------------------+
 double Lotsize() {
 	double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-	double cost=MarketInfo(Symbol(),MODE_MARGINREQUIRED);
+	double cost = MarketInfo(Symbol(), MODE_MARGINREQUIRED);
 	double perEquity = equity / (simultaneous_symbol);
-	double size = Floorsize(perEquity/(cost+riskPoints)); //max loss (0.1*balance = stp* size)  point*10 because we use 0.00001 as unit
+	double size = Floorsize(perEquity / (cost + riskPoints)); //max loss (0.1*balance = stp* size)  point*10 because we use 0.00001 as unit
 	size = MathMin(size, MarketInfo(Symbol(), MODE_MAXLOT));
 	size = MathMax(size, MarketInfo(Symbol(), MODE_MINLOT));
 	return size;
@@ -349,7 +353,7 @@ void checkProfit() {
 void checkStoploss() {
 	int total = OrdersTotal();
 	double currentTime = TimeCurrent();
-   double five_mins= 5* one_min;
+	double five_mins = 5 * one_min;
 	for (int i = 0; i < total; i++) {
 		bool select = OrderSelect(i, SELECT_BY_POS , MODE_TRADES);
 		if (select) {
@@ -363,7 +367,7 @@ void checkStoploss() {
 						reverse_event = true;
 						Sell(sym, lots_size, "reverse Sell", magicnum, big_slip, reverse_stage);
 						printf("close by stoploss, big slip");
-					} 
+					}
 				} else if (OrderType() == OP_SELL && Ask > stoploss_value) {
 					CloseAllOrder(big_slip, total_close_rate);
 					// do reverse trade
@@ -371,7 +375,7 @@ void checkStoploss() {
 						reverse_event = true;
 						Buy(sym, lots_size, "reverse Buy", magicnum, big_slip, reverse_stage);
 						printf("close by stoploss, big slip");
-					} 
+					}
 				}
 			}
 		}
@@ -455,13 +459,16 @@ void checkOrderFallbackProfit() {
 			// set max
 			if (Bid > max_profit_value) {
 				max_profit_value = Bid;
-				leave_value = max_profit_value - ((max_profit_value - start_value) * fallback_rate[fallback_index]);
+				double profit = max_profit_value-start_value;
+				leave_value = max_profit_value - (profit * fallback_rate[fallback_index]);
+				//printf("buy max:"+max_profit_value+";profit:"+profit+"leave:"+leave_value);
 			}
 			if (allowfallbackClose && max_profit_value > threshold ) {
 				if ( Bid < leave_value) {
 					printf("close by fallback:" + fallback_rate[fallback_index] + " Max tick value:" + max_profit_value + " leave value:" + leave_value);
 					if (fallback_index == 0) { //close 50%
-						leave_value = max_profit_value - ((max_profit_value - start_value) * fallback_rate[++fallback_index]);
+					   double profit = max_profit_value-start_value;
+						leave_value = max_profit_value - (profit * fallback_rate[++fallback_index]);
 						CloseAllOrder(small_slip, half_closerate);
 					} else { //close all and reset parameters
 						CloseAllOrder(small_slip, total_close_rate);
@@ -479,14 +486,17 @@ void checkOrderFallbackProfit() {
 			// set max
 			if (Ask < max_profit_value) {
 				max_profit_value = Ask;
-				leave_value = max_profit_value + ((threshold + fallback_thresh_pt * Point() - max_profit_value) * fallback_rate[fallback_index]);
+				double profit = start_value - max_profit_value;
+				leave_value = max_profit_value + (profit * fallback_rate[fallback_index]);
+			   //printf("sell max:"+max_profit_value+";profit:"+profit+"leave:"+leave_value);
 			}
 			if (allowfallbackClose && max_profit_value < threshold) {
 				if (Ask > leave_value) {
 					printf("close by fallback" + fallback_rate[fallback_index] + " Max tick value:" + max_profit_value + " leave value:" + leave_value);
 					if (fallback_index == 0) { //close 50%
 						CloseAllOrder(small_slip, half_closerate);
-						leave_value = max_profit_value + ((threshold + fallback_thresh_pt * Point() - max_profit_value) * fallback_rate[++fallback_index]);
+						double profit = start_value- max_profit_value;
+						leave_value = max_profit_value + (profit * fallback_rate[++fallback_index]);
 					} else {  //close all and reset parameters
 						CloseAllOrder(small_slip, total_close_rate);
 						fallback_index = 0;
