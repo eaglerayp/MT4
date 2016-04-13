@@ -18,7 +18,7 @@ extern int big_slip = 15;
 extern double point_value = 0.1;
 extern double partial_closerate = 0.25;
 extern double half_closerate = 0.5;
-extern int simultaneous_symbol = 2;
+extern int simultaneous_symbol = 1;
 extern int stp = 800;
 extern double prestage_stp = 150;
 extern double prestage_risk = 0.01;
@@ -92,8 +92,8 @@ double riskPoints;
 int OnInit()
 {
 //---
-	lots_size = Lotsize();
-	codeversion = "20160327:test fallback & add surprise";
+
+	codeversion = "20160401:EURUSD";
 	stage_reverse_allow_fallback = 0.5 * one_hour;
 	stage_reverse_event_sec = 4 * one_hour;
 	last_rate = 1;
@@ -130,6 +130,7 @@ int OnInit()
 	FileDelete(filename);
 	Print("version:" + codeversion);
 	Print("Symbol=", Symbol());
+	lots_size = Lotsize();
 	Print("Initial size", lots_size);
 //---
 	return (INIT_SUCCEEDED);
@@ -230,28 +231,29 @@ void OnTick() {
 			} else if (stage_code == 2) { //announce stage
 				// InPreStage = false;
 				profitcheck = false;
+				int announce_lots_size = lots_size;
 				if (StringCompare(parameters, "1") == 0) { // surprise
-					lots_size *= 2;
+					 announce_lots_size *= 2;
 				}
 				if (StringCompare(strategy, "better") == 0) {
 					if (stageone_status == 1) { // better and better  , add!  new 25% fallback baseline
 						string comment = "big better";
-						Sell(sym, Floorsize(lots_size * partial_closerate), comment, magicnum, big_slip, announce_stage); //add
+						Sell(sym, Floorsize(announce_lots_size * partial_closerate), comment, magicnum, big_slip, announce_stage); //add
 					} else { //WB strategy, close and add right now
 						CloseAllOrder(big_slip, total_close_rate);
 						string comment = "announce reverse";
-						Sell(sym, lots_size, comment, magicnum, big_slip, announce_stage);
+						Sell(sym, announce_lots_size, comment, magicnum, big_slip, announce_stage);
 					}
 					allowfallbackClose = true;
 					stage_code = 0;
 				} else if (StringCompare(strategy, "worse") == 0) {
 					if (stageone_status == 2) { // worse and worse  , add!  new 25% fallback baseline
 						string comment = "big worse";
-						Buy(sym, Floorsize(lots_size * partial_closerate), comment, magicnum, big_slip, announce_stage); //add
+						Buy(sym, Floorsize(announce_lots_size * partial_closerate), comment, magicnum, big_slip, announce_stage); //add
 					} else { //BW strategy, close and add right now
 						CloseAllOrder(big_slip, total_close_rate);
 						string comment = "announce reverse";
-						Buy(sym, lots_size, comment, magicnum, big_slip, announce_stage);
+						Buy(sym, announce_lots_size, comment, magicnum, big_slip, announce_stage);
 					}
 					allowfallbackClose = true;
 					stage_code = 0;
