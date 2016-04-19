@@ -231,10 +231,11 @@ void OnTick() {
 			} else if (stage_code == 2) { //announce stage
 				// InPreStage = false;
 				profitcheck = false;
-				int announce_lots_size = lots_size;
+				double announce_lots_size = lots_size;
 				if (StringCompare(parameters, "1") == 0) { // surprise
 					 announce_lots_size *= 2;
 				}
+				printf("this ann lots size:" + lots_size);
 				if (StringCompare(strategy, "better") == 0) {
 					if (stageone_status == 1) { // better and better  , add!  new 25% fallback baseline
 						string comment = "big better";
