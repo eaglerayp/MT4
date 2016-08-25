@@ -19,11 +19,13 @@ const double totalCloseRate = 1.0;
 const int maxConcurrentTrade = 100;
 const double ten = 10;
 const double zero = 0.0;
+const double one = 1.0;
 
 double maxProfitTracker[100];
 double maxLossTracker[100];
 bool tracked[100];
 double threshold[100];
+double leftRate;
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
@@ -31,6 +33,7 @@ int OnInit()
 {
 //---
 //---
+	leftRate = one - fallbackRate;
 	return (INIT_SUCCEEDED);
 }
 //+------------------------------------------------------------------+
@@ -132,7 +135,7 @@ void checkProfit(int ticket, int index) {
 
 	// check fallback
 	double onePercentThreshold = threshold[index];
-	if (maxProfitTracker[index] > onePercentThreshold && profit < maxProfitTracker[index] * fallbackRate) {
+	if (maxProfitTracker[index] > onePercentThreshold && profit < maxProfitTracker[index] * leftRate) {
 		printf("ticket:" + ticket + ", close by fallback profit:" + profit);
 		CloseOrder(ticket, index, defaultSlip, totalCloseRate);
 		return;
