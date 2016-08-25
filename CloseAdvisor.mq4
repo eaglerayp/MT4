@@ -12,11 +12,18 @@
 
 extern double holdTime = 1800;  //sec
 extern int defaultSlip = 5;
-double totalCloseRate;
+extern double fallbackRate = 0.2;
+const double totalCloseRate = 1.0;
 
 // assume maximum concurreny trade is 100
+const int maxConcurrentTrade = 100;
+const double ten = 10;
+const double zero = 0.0;
+
 double maxProfitTracker[100];
 double maxLossTracker[100];
+bool tracked[100];
+double threshold[100];
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
@@ -24,7 +31,6 @@ int OnInit()
 {
 //---
 //---
-	totalCloseRate = 1.0;
 	return (INIT_SUCCEEDED);
 }
 //+------------------------------------------------------------------+
@@ -65,7 +71,7 @@ double getOnePercent() {
 
 //+------------------------------------------------------------------+
 int hashIndex(int ticket) {
-	return ticket % 100;
+	return ticket % maxConcurrentTrade;
 }
 
 // checkOrders iterate all orders and check time, profit and fallback respectively.
@@ -76,34 +82,48 @@ void checkOrders() {
 		bool select = OrderSelect(i, SELECT_BY_POS , MODE_TRADES);
 		if (select) {
 			// check profit
-			checkProfit();
+			int ticket = OrderTicket();
+			int index = hashIndex(ticket);
+			logInfo(ticket, index);
+			checkProfit(ticket, index);
 			// check fallback
 			// check time
-			checkTime();
+			checkTime(ticket, index);
 		}//end select
 	}//end for
 }
 //+------------------------------------------------------------------+
-void checkTime() {
+void logInfo(int ticket, int index) {
+	if (tracked[index]){
+		return;
+	}
+
+	printf("ticket :" + ticket + ", first tracked");
+	double onePercent = getOnePercent();
+	printf("lot size :" + OrderLots() + ", one percent treshold:" + onePercent);
+	tracked[index] = true;
+	threshold[index] = onePercent;
+}
+//+------------------------------------------------------------------+
+void checkTime(int ticket, int index) {
 	double currentTimestemp = TimeCurrent();
 	double openTimestamp = OrderOpenTime();
 	double leaveTimestamp = openTimestamp + holdTime;
-	int ticket = OrderTicket();
+
 	if ( leaveTimestamp < currentTimestemp) { //
 		//time up CloseAllOrder
 		printf("ticket:" + ticket + ", close by time");
-		CloseOrder(ticket, defaultSlip, totalCloseRate);
+		CloseOrder(ticket, index, defaultSlip, totalCloseRate);
 	}
 }
 //+------------------------------------------------------------------+
-void checkProfit() {
-	int ticket = OrderTicket();
+void checkProfit(int ticket, int index) {
 	double profit = OrderProfit();
-	int index = hashIndex(ticket);
 
 	// update max profit
 	if (profit > maxProfitTracker[index]) {
 		maxProfitTracker[index] = profit;
+		return;
 	}
 	// update max Loss
 	if (profit < maxLossTracker[index]) {
@@ -111,20 +131,20 @@ void checkProfit() {
 	}
 
 	// check fallback
-	double onePercent = getOnePercent();
-	// printf(onePercent);
-	if (maxProfitTracker[index] > onePercent && profit < maxProfitTracker[index] * 0.2) {
+	double onePercentThreshold = threshold[index];
+	if (maxProfitTracker[index] > onePercentThreshold && profit < maxProfitTracker[index] * fallbackRate) {
 		printf("ticket:" + ticket + ", close by fallback profit:" + profit);
-		CloseOrder(ticket, defaultSlip, totalCloseRate);
+		CloseOrder(ticket, index, defaultSlip, totalCloseRate);
+		return;
 	}
 
-	if (profit < -10 * onePercent) {
+	if (profit < -ten * onePercentThreshold) {
 		printf("ticket:" + ticket + ", close by check profit:" + profit);
-		CloseOrder(ticket, defaultSlip, totalCloseRate);
+		CloseOrder(ticket, index, defaultSlip, totalCloseRate);
 	}
 }
 //+------------------------------------------------------------------+
-void CloseOrder(int ticket, int slip, double closerate) {
+void CloseOrder(int ticket, int index, int slip, double closerate) {
 	printf("Start closing Order:" + ticket + ", closerate:" + closerate);
 	double price;
 
@@ -152,12 +172,13 @@ void CloseOrder(int ticket, int slip, double closerate) {
 	// Log message during the trade:
 	// 1. max loss
 	// 3. max profit
-	int index = hashIndex(ticket);
 	printf("ticket:" + ticket + ", close end");
 	printf("max profit:" + maxProfitTracker[index]);
 	printf("max loss:" + maxLossTracker[index]);
-	maxProfitTracker[index] = 0.0;
-	maxLossTracker[index] = 0.0;
+	maxProfitTracker[index] = zero;
+	maxLossTracker[index] = zero;
+	tracked[index] = false;
+	threshold[index] = zero;
 
 }
 //+------------------------------------------------------------------+
