@@ -12,19 +12,25 @@
 
 extern double holdTime = 1800;  //sec
 extern int defaultSlip = 5;
-extern double fallbackRate = 0.2;
+extern double fallbackRate = 0.5;
 const double totalCloseRate = 1.0;
 
-// assume maximum concurreny trade is 100
-const int maxConcurrentTrade = 100;
+// assume maximum concurreny trade is 256
+const int maxConcurrentTrade = 256;
+const int lengthForHash = 255;
 const double ten = 10;
 const double zero = 0.0;
 const double one = 1.0;
 
-double maxProfitTracker[100];
-double maxLossTracker[100];
-bool tracked[100];
-double threshold[100];
+// for tracking collision
+bool collision = false;
+// bool tracked[256];
+int trackedTicket[256];
+double maxProfitTracker[256];
+double maxLossTracker[256];
+double threshold[256];
+double stopLoss[256];
+// double takeProfit[256];
 double leftRate;
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -59,24 +65,82 @@ void OnTick()
 	// 1. max loss
 	// 2. max profit
 	// 3. max profit during the trade
-
 }
 //+------------------------------------------------------------------+
 double getOnePercent() {
 	// 1% = lot size * 1 lot cost * 0.01
-	// Print("lot size:" + OrderLots());
-	// Print("Margin size:" + MarketInfo(OrderSymbol(), MODE_MARGINREQUIRED));
-	double marginCost = double(MarketInfo(OrderSymbol(), MODE_MARGINREQUIRED));
-	double onePercent = OrderLots() * marginCost * 0.01;
-	// Print(onePercent);
+	// this 1 percent calculate the how much lost means 1 percent of the trade (by the lot size).
+	// double marginCost = double(MarketInfo(OrderSymbol(), MODE_MARGINREQUIRED));
+	// double onePercent = OrderLots() * marginCost * 0.01;
+	// return onePercent;
+
+	double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+	double onePercent = balance * 0.01;
+	return onePercent;
+}
+//+------------------------------------------------------------------+
+double getTenPercent() {
+	double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+	double onePercent = balance * 0.1;
 	return onePercent;
 }
 
+
 //+------------------------------------------------------------------+
 int hashIndex(int ticket) {
-	return ticket % maxConcurrentTrade;
-}
+	int index = ticket & lengthForHash;
 
+	// check first tracked this order?
+	if (trackedTicket[index] == ticket){
+		// common case done
+		return index;
+	}
+	if (trackedTicket[index] == 0){
+		// maybe one of collision trade closed, so iterate trackedTicket to check if collisions finish
+		if (!collision){
+			// first
+			InitTradeLogInfo(ticket,index);
+		}
+		int checkIndex = findTrackedTicket(ticket);
+		if (checkIndex<maxConcurrentTrade){
+			// still in collision period
+			return checkIndex;
+			collision = false;
+		}
+		// end of collision period
+		InitTradeLogInfo(ticket,index);
+		return index;
+	}
+	if (trackedTicket[index] != ticket){
+		// collision case
+		printf("ticket :" + ticket + ", had collision!");
+		while (true){
+			if (trackedTicket[index]==0){
+				// first collision
+				collision = true;
+				InitTradeLogInfo(ticket,index);
+				return index;
+			} 
+			if (trackedTicket[index]==ticket){
+				// in collision period
+				return index;
+			}
+			index++;
+		}
+		return index;
+	}
+	return index;
+}
+//+------------------------------------------------------------------+
+int findTrackedTicket(int ticket){
+	for (int i = 0; i < maxConcurrentTrade; i++) {
+		if (trackedTicket[i] == ticket){
+			return i;
+		}
+	}
+	return 1024;
+}
+//+------------------------------------------------------------------+
 // checkOrders iterate all orders and check time, profit and fallback respectively.
 //+------------------------------------------------------------------+
 void checkOrders() {
@@ -87,7 +151,6 @@ void checkOrders() {
 			// check profit
 			int ticket = OrderTicket();
 			int index = hashIndex(ticket);
-			logInfo(ticket, index);
 			checkProfit(ticket, index);
 			// check fallback
 			// check time
@@ -96,16 +159,21 @@ void checkOrders() {
 	}//end for
 }
 //+------------------------------------------------------------------+
-void logInfo(int ticket, int index) {
-	if (tracked[index]){
-		return;
-	}
-
-	printf("ticket :" + ticket + ", first tracked");
+// void resetTracked() {
+// 	for (int i = 0; i < maxConcurrentTrade; i++) {
+// 		tracked[i]=false;
+// 	}
+// }
+//+------------------------------------------------------------------+
+void InitTradeLogInfo(int ticket, int index) {
+	printf("ticket :" + ticket + ", first tracked at index:" + index);
 	double onePercent = getOnePercent();
 	printf("lot size :" + OrderLots() + ", one percent treshold:" + onePercent);
-	tracked[index] = true;
-	threshold[index] = onePercent;
+	trackedTicket[index] = ticket;
+	threshold[index] = 3 * onePercent;
+	double tenPercent = getTenPercent();
+	stopLoss[index] = -tenPercent;
+	// takeProfit[index] = tenPercent;
 }
 //+------------------------------------------------------------------+
 void checkTime(int ticket, int index) {
@@ -141,8 +209,9 @@ void checkProfit(int ticket, int index) {
 		return;
 	}
 
-	if (profit < -ten * onePercentThreshold) {
-		printf("ticket:" + ticket + ", close by check profit:" + profit);
+	// hard stoploss
+	if (profit < stopLoss[index]) {
+		printf("ticket:" + ticket + ", close by stoploss profit:" + profit);
 		CloseOrder(ticket, index, defaultSlip, totalCloseRate);
 	}
 }
@@ -172,6 +241,8 @@ void CloseOrder(int ticket, int index, int slip, double closerate) {
 			return;
 		}
 	}//end select
+
+	// Close succesfully
 	// Log message during the trade:
 	// 1. max loss
 	// 3. max profit
@@ -180,70 +251,10 @@ void CloseOrder(int ticket, int index, int slip, double closerate) {
 	printf("max loss:" + maxLossTracker[index]);
 	maxProfitTracker[index] = zero;
 	maxLossTracker[index] = zero;
-	tracked[index] = false;
 	threshold[index] = zero;
-
+	trackedTicket[index] = zero;
 }
-//+------------------------------------------------------------------+
-// void checkOrderFallbackProfit() {
-// 	if (ordertype > 0) {
-// 		if (ordertype == 1) { //buy
-// 			// set max
-// 			if (Bid > max_profit_value) {
-// 				max_profit_value = Bid;
-// 				double profit = max_profit_value-start_value;
-// 				leave_value = max_profit_value - (profit * fallback_rate[fallback_index]);
-// 				//printf("buy max:"+max_profit_value+";profit:"+profit+"leave:"+leave_value);
-// 			}
-// 			if (allowfallbackClose && max_profit_value > threshold ) {
-// 				if ( Bid < leave_value) {
-// 					printf("close by fallback:" + fallback_rate[fallback_index] + " Max tick value:" + max_profit_value + " leave value:" + leave_value);
-// 					if (fallback_index == 0) { //close 50%
-// 					   double profit = max_profit_value-start_value;
-// 						leave_value = max_profit_value - (profit * fallback_rate[++fallback_index]);
-// 						CloseAllOrder(small_slip, half_closerate);
-// 					} else { //close all and reset parameters
-// 						CloseAllOrder(small_slip, totalCloseRate);
-// 						fallback_index = 0;
-// 						allowfallbackClose = false;
-// 						max_profit_value = 9999;
-// 						leave_value = 9999;
-// 						threshold = 9999;
-// 						ordertype = 0;
-// 						start_value = 9999;
-// 					}
-// 				}
-// 			}
-// 		} else { //sell
-// 			// set max
-// 			if (Ask < max_profit_value) {
-// 				max_profit_value = Ask;
-// 				double profit = start_value - max_profit_value;
-// 				leave_value = max_profit_value + (profit * fallback_rate[fallback_index]);
-// 			   //printf("sell max:"+max_profit_value+";profit:"+profit+"leave:"+leave_value);
-// 			}
-// 			if (allowfallbackClose && max_profit_value < threshold) {
-// 				if (Ask > leave_value) {
-// 					printf("close by fallback" + fallback_rate[fallback_index] + " Max tick value:" + max_profit_value + " leave value:" + leave_value);
-// 					if (fallback_index == 0) { //close 50%
-// 						CloseAllOrder(small_slip, half_closerate);
-// 						double profit = start_value- max_profit_value;
-// 						leave_value = max_profit_value + (profit * fallback_rate[++fallback_index]);
-// 					} else {  //close all and reset parameters
-// 						CloseAllOrder(small_slip, totalCloseRate);
-// 						fallback_index = 0;
-// 						allowfallbackClose = false;
-// 						max_profit_value = 9999;
-// 						leave_value = 9999;
-// 						threshold = 9999;
-// 						start_value = 9999;
-// 						ordertype = 0;
-// 					}
-// 				}
-// 			}
-// 		}
-// 	}
-// }
+
 //+------------------------------------------------------------------+
 // double Lotsize() {
 // 	double equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -263,38 +274,3 @@ double Floorsize(double x) {
 	size = MathMax(size, MarketInfo(Symbol(), MODE_MINLOT));
 	return size;
 }
-
-//+------------------------------------------------------------------+
-// void checkStoploss() {
-// 	int total = OrdersTotal();
-// 	double currentTime = TimeCurrent();
-// 	double five_mins = 5 * one_min;
-// 	for (int i = 0; i < total; i++) {
-// 		bool select = OrderSelect(i, SELECT_BY_POS , MODE_TRADES);
-// 		if (select) {
-// 			string sym_close = OrderSymbol();
-// 			double Orderopen = OrderOpenTime();
-// 			if (sym_close == sym && currentTime > Orderopen + five_mins) {
-// 				if (OrderType() == OP_BUY && Bid < stoploss_value) {
-// 					CloseAllOrder(big_slip, totalCloseRate);
-// 					// only in post stage do reverse trade
-// 					if (InPostStage) {
-// 						reverse_event = true;
-// 						Sell(sym, lots_size, "reverse Sell", magicnum, big_slip, reverse_stage);
-// 						printf("close by stoploss, big slip");
-// 					}
-// 				} else if (OrderType() == OP_SELL && Ask > stoploss_value) {
-// 					CloseAllOrder(big_slip, totalCloseRate);
-// 					// do reverse trade
-// 					if (InPostStage) {
-// 						reverse_event = true;
-// 						Buy(sym, lots_size, "reverse Buy", magicnum, big_slip, reverse_stage);
-// 						printf("close by stoploss, big slip");
-// 					}
-// 				}
-// 			}
-// 		}
-// 	}//end select
-// //end for
-// }
-//+------------------------------------------------------------------+
