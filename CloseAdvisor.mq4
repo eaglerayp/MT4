@@ -10,7 +10,7 @@
 #include <stderror.mqh>
 #include <stdlib.mqh>
 
-extern double holdTime = 1800;  //sec
+extern double holdTime = 86400;  //1 day in sec
 extern int defaultSlip = 5;
 extern double fallbackRate = 0.5;
 const double totalCloseRate = 1.0;
@@ -39,6 +39,10 @@ int OnInit()
 {
 //---
 //---
+	printf("Input arguments:");
+	printf("holdTime:" + holdTime);
+	printf("defaultSlip:" + defaultSlip);
+	printf("fallbackRate:" + fallbackRate);
 	leftRate = one - fallbackRate;
 	return (INIT_SUCCEEDED);
 }
@@ -91,37 +95,37 @@ int hashIndex(int ticket) {
 	int index = ticket & lengthForHash;
 
 	// check first tracked this order?
-	if (trackedTicket[index] == ticket){
+	if (trackedTicket[index] == ticket) {
 		// common case done
 		return index;
 	}
-	if (trackedTicket[index] == 0){
+	if (trackedTicket[index] == 0) {
 		// maybe one of collision trade closed, so iterate trackedTicket to check if collisions finish
-		if (!collision){
+		if (!collision) {
 			// first
-			InitTradeLogInfo(ticket,index);
+			InitTradeLogInfo(ticket, index);
 		}
 		int checkIndex = findTrackedTicket(ticket);
-		if (checkIndex<maxConcurrentTrade){
+		if (checkIndex < maxConcurrentTrade) {
 			// still in collision period
 			return checkIndex;
 			collision = false;
 		}
 		// end of collision period
-		InitTradeLogInfo(ticket,index);
+		InitTradeLogInfo(ticket, index);
 		return index;
 	}
-	if (trackedTicket[index] != ticket){
+	if (trackedTicket[index] != ticket) {
 		// collision case
 		printf("ticket :" + ticket + ", had collision!");
-		while (true){
-			if (trackedTicket[index]==0){
+		while (true) {
+			if (trackedTicket[index] == 0) {
 				// first collision
 				collision = true;
-				InitTradeLogInfo(ticket,index);
+				InitTradeLogInfo(ticket, index);
 				return index;
-			} 
-			if (trackedTicket[index]==ticket){
+			}
+			if (trackedTicket[index] == ticket) {
 				// in collision period
 				return index;
 			}
@@ -132,9 +136,9 @@ int hashIndex(int ticket) {
 	return index;
 }
 //+------------------------------------------------------------------+
-int findTrackedTicket(int ticket){
+int findTrackedTicket(int ticket) {
 	for (int i = 0; i < maxConcurrentTrade; i++) {
-		if (trackedTicket[i] == ticket){
+		if (trackedTicket[i] == ticket) {
 			return i;
 		}
 	}
@@ -148,6 +152,10 @@ void checkOrders() {
 	for (int i = 0; i < total; i++) {
 		bool select = OrderSelect(i, SELECT_BY_POS , MODE_TRADES);
 		if (select) {
+			int type = OrderType();
+			if (type != OP_BUY && type != OP_SELL) {
+				continue;
+			}
 			// check profit
 			int ticket = OrderTicket();
 			int index = hashIndex(ticket);
